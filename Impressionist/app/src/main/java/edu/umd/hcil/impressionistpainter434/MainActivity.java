@@ -4,18 +4,16 @@ import android.app.AlertDialog;
 import android.content.DialogInterface;
 import android.content.Intent;
 import android.graphics.Bitmap;
+import android.graphics.Matrix;
 import android.net.Uri;
+import android.os.Bundle;
 import android.os.Environment;
 import android.provider.MediaStore;
 import android.support.v7.app.AppCompatActivity;
-import android.os.Bundle;
 import android.util.Log;
-import android.view.Menu;
-import android.view.MenuInflater;
 import android.view.MenuItem;
 import android.view.View;
 import android.webkit.URLUtil;
-import android.widget.ActionMenuView;
 import android.widget.ImageView;
 import android.widget.PopupMenu;
 import android.widget.PopupMenu.OnMenuItemClickListener;
@@ -26,11 +24,10 @@ import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
 
+import it.sephiroth.android.library.imagezoom.ImageViewTouch;
+
 public class MainActivity extends AppCompatActivity implements OnMenuItemClickListener {
-
     private static int RESULT_LOAD_IMAGE = 1;
-    private  ImpressionistView _impressionistView;
-
     // These images are downloaded and added to the Android Gallery when the 'Download Images' button is clicked.
     // This was super useful on the emulator where there are no images by default
     private static String[] IMAGE_URLS ={
@@ -53,6 +50,8 @@ public class MainActivity extends AppCompatActivity implements OnMenuItemClickLi
             "http://www.cs.umd.edu/class/spring2016/cmsc434/assignments/IA08-AndroidII/Images/WhiteFlower_PhotoByJonFroehlich(Medium).JPG",
             "http://www.cs.umd.edu/class/spring2016/cmsc434/assignments/IA08-AndroidII/Images/YellowFlower_PhotoByJonFroehlich(Medium).JPG",
     };
+    private String TAG = getClass().getSimpleName();
+    private ImpressionistView _impressionistView;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -60,8 +59,14 @@ public class MainActivity extends AppCompatActivity implements OnMenuItemClickLi
         setContentView(R.layout.activity_main);
 
         _impressionistView = (ImpressionistView)findViewById(R.id.viewImpressionist);
-        ImageView imageView = (ImageView)findViewById(R.id.viewImage);
+        final ImageViewTouch imageView = (ImageViewTouch) findViewById(R.id.viewImage);
 
+        imageView.setImageUpdateListener(new ImageViewTouch.OnImageUpdateListener() {
+            @Override
+            public void onImageUpdated(Matrix matrix) {
+                _impressionistView.setMatrix(imageView.getImageMatrix());
+            }
+        });
     }
 
     public void onButtonClickClear(View v) {
@@ -75,6 +80,10 @@ public class MainActivity extends AppCompatActivity implements OnMenuItemClickLi
                         _impressionistView.clearPainting();
                     }})
                 .setNegativeButton(android.R.string.no, null).show();
+    }
+
+    public void onButtonClickAuto(View v) {
+        _impressionistView.paintTheCanvas();
     }
 
     public void onButtonClickSetBrush(View v) {

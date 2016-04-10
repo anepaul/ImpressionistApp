@@ -6,7 +6,6 @@ import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Matrix;
 import android.graphics.Paint;
-import android.graphics.Path;
 import android.graphics.Point;
 import android.graphics.Rect;
 import android.graphics.drawable.Drawable;
@@ -17,9 +16,6 @@ import android.view.View;
 import android.widget.ImageView;
 
 import java.text.MessageFormat;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Random;
 
 
 public class ImpressionistView extends View {
@@ -32,16 +28,16 @@ public class ImpressionistView extends View {
     private Bitmap _offScreenBitmap = null;
     private Paint _paint = new Paint();
 
-    private PaintStroke _currPaintStroke = new PaintStroke();
-
     private int _alpha = 150;
     private Point _lastPoint = new Point();
     private long _lastPointTime = -1;
     private Paint _paintBorder = new Paint();
     private BrushType _brushType = BrushType.Square;
     private int _minBrushRadius = 5;
+    private Matrix _dstMatrix = null;
+    private Matrix _srcMatrix = null;
+    private Point _currPoint = new Point();
 
-    private boolean _firstTouch = true;
     private boolean _ready = false;
 
     public ImpressionistView(Context context) {
@@ -57,6 +53,53 @@ public class ImpressionistView extends View {
     public ImpressionistView(Context context, AttributeSet attrs, int defStyle) {
         super(context, attrs, defStyle);
         init(attrs, defStyle);
+    }
+
+    /**
+     * This method is useful to determine the bitmap position within the Image View. It's not needed for anything else
+     * Modified from:
+     * - http://stackoverflow.com/a/15538856
+     * - http://stackoverflow.com/a/26930938
+     *
+     * @param imageView
+     * @return
+     */
+    private static Rect getBitmapPositionInsideImageView(ImageView imageView) {
+        Rect rect = new Rect();
+
+        if (imageView == null || imageView.getDrawable() == null) {
+            return rect;
+        }
+
+        // Get image dimensions
+        // Get image matrix values and place them in an array
+        float[] f = new float[9];
+        imageView.getImageMatrix().getValues(f);
+
+        // Extract the scale values using the constants (if aspect ratio maintained, scaleX == scaleY)
+        final float scaleX = f[Matrix.MSCALE_X];
+        final float scaleY = f[Matrix.MSCALE_Y];
+
+        // Get the drawable (could also get the bitmap behind the drawable and getWidth/getHeight)
+        final Drawable d = imageView.getDrawable();
+        final int origW = d.getIntrinsicWidth();
+        final int origH = d.getIntrinsicHeight();
+
+        // Calculate the actual dimensions
+        final int widthActual = Math.round(origW * scaleX);
+        final int heightActual = Math.round(origH * scaleY);
+
+        // Get image position
+        // We assume that the image is centered into ImageView
+        int imgViewW = imageView.getWidth();
+        int imgViewH = imageView.getHeight();
+
+        int top = (imgViewH - heightActual) / 2;
+        int left = (imgViewW - widthActual) / 2;
+
+        rect.set(left, top, left + widthActual, top + heightActual);
+
+        return rect;
     }
 
     /**
@@ -117,13 +160,24 @@ public class ImpressionistView extends View {
         _brushType = brushType;
     }
 
+    public void setMatrix(Matrix matrix) {
+        if (matrix != null) {
+            _dstMatrix = matrix;
+            _srcMatrix = new Matrix();
+            if (!_dstMatrix.invert(_srcMatrix)) {
+                Log.w(TAG, "setMatrix: Matrix is not invertible");
+            }
+            invalidate();
+        }
+    }
+
     /**
      * Clears the painting
      */
     public void clearPainting(){
-        //TODO
         _offScreenBitmap = getDrawingCache().copy(Bitmap.Config.ARGB_8888, true);
         _offScreenCanvas = new Canvas(_offScreenBitmap);
+        invalidate();
     }
 
     @Override
@@ -131,7 +185,12 @@ public class ImpressionistView extends View {
         super.onDraw(canvas);
 
         if(_offScreenBitmap != null) {
-            canvas.drawBitmap(_offScreenBitmap, 0, 0, _paint);
+//            canvas.drawBitmap(_offScreenBitmap, 0, 0, _paint);
+            if (_dstMatrix == null) {
+                canvas.drawBitmap(_offScreenBitmap, 0, 0, _paint);
+            } else {
+                canvas.drawBitmap(_offScreenBitmap, _dstMatrix, _paint);
+            }
         }
 
         // Draw the border. Helpful to see the size of the bitmap in the ImageView
@@ -141,61 +200,84 @@ public class ImpressionistView extends View {
     @Override
     public boolean onTouchEvent(MotionEvent motionEvent){
 
-        //TODO
-        //Basically, the way this works is to liste for Touch Down and Touch Move events and determine where those
-        //touch locations correspond to the bitmap in the ImageView. You can then grab info about the bitmap--like the pixel color--
-        //at that location
         if (_ready) {
+            _currPoint.x = (int) motionEvent.getX();
+            _currPoint.y = (int) motionEvent.getY();
 
-            int touchX = (int) motionEvent.getX();
-            int touchY = (int) motionEvent.getY();
             long time = motionEvent.getEventTime();
 
             switch (motionEvent.getActionMasked()) {
                 case MotionEvent.ACTION_DOWN:
-                    if (_firstTouch) {
-                        _lastPointTime = time;
-                        _lastPoint = new Point(touchX, touchY);
-                    }
-                    paintTheCanvas(touchX, touchY, time);
+                    updateLastTouchEvent(motionEvent);
                     break;
                 case MotionEvent.ACTION_MOVE:
                     if (motionEvent.getPointerCount() < 2) {
-                        paintTheCanvas(touchX, touchY, time);
+                        paintCanvas(mapXY(_currPoint, _srcMatrix), getSpeed(_currPoint, _lastPoint, time, _lastPointTime));
+                        updateLastTouchEvent(motionEvent);
                     }
                     break;
                 case MotionEvent.ACTION_UP:
-
                     break;
                 case MotionEvent.ACTION_POINTER_DOWN:
-
                     break;
             }
         }
 
-
         return true;
     }
 
-    private void paintTheCanvas(int x, int y, long time) {
-        if (x > 0 && y > 0 && x < getWidth() && y < getHeight()) {
-            Point point = new Point(x,y);
-            int radius = _minBrushRadius;
-            radius += getSpeed(point, _lastPoint, time, _lastPointTime);
-            Log.i(TAG, "paintTheCanvas: speed = " + getSpeed(point, _lastPoint, time, _lastPointTime));
-            _currPaintStroke.point.set(x, y);
-            _currPaintStroke.paint.setColor(_originalImage.getPixel(x, y));
+    public void paintTheCanvas() {
+        for (int x = 0; x < _offScreenBitmap.getWidth(); x += 10) {
+            for (int y = 0; y < _offScreenBitmap.getHeight(); y += 10) {
+                paintCanvas(mapXY(new Point(x + (int) (Math.random() * 5), y + (int) (Math.random() * 5)), _srcMatrix),
+                        (int) (Math.random() * 10));
+            }
+        }
+        postInvalidate();
+    }
+
+    private Point mapXY(Point p, Matrix m) {
+        float[] values = new float[2];
+        values[0] = p.x;
+        values[1] = p.y;
+        m.mapPoints(values);
+        return new Point((int) values[0], (int) values[1]);
+    }
+
+    private void updateLastTouchEvent(MotionEvent motionEvent) {
+        _lastPointTime = motionEvent.getEventTime();
+        _lastPoint = new Point((int) motionEvent.getX(), (int) motionEvent.getY());
+    }
+
+    private void paintCanvas(Point point, int speed) {
+//        float [] outPoints = mapXY(point, _dstMatrix);
+//        float [] inPoints = mapXY(point, _srcMatrix);
+//        int outX = (int) outPoints[0];
+//        int outY = (int) outPoints[1];
+        int outX = point.x;
+        int outY = point.y;
+//        int inX = (int) inPoints[0];
+//        int inY = (int) inPoints[1];
+        int inX = point.x;
+        int inY = point.y;
+        if (inX > 0 && inY > 0 && inX < _originalImage.getWidth() && inY < _originalImage.getHeight()) {
+            int radius = 10 + speed;
+            // Extract the scale values using the constants (if aspect ratio maintained, scaleX == scaleY)
+            float[] f = new float[9];
+            _dstMatrix.getValues(f);
+            final float scale = f[Matrix.MSCALE_X] / 3;
+            radius /= scale;
+//            Log.i(TAG, "paintCanvas: radius = " + radius + ", speed = " + speed);
+            _paint.setColor(_originalImage.getPixel(inX, inY));
             switch (_brushType) {
                 case Circle:
-                    _offScreenCanvas.drawCircle(x, y, radius/2, _currPaintStroke.paint);
+                    _offScreenCanvas.drawCircle(outX, outY, radius / 2, _paint);
                     break;
                 case Square:
-                    _offScreenCanvas.drawRect(makeRect(x,y,radius/2),_currPaintStroke.paint);
+                    _offScreenCanvas.drawRect(makeRect(outX, outY, radius / 2), _paint);
                     break;
             }
-            invalidate(makeRect(x,y,radius));
-            _lastPoint=point;
-            _lastPointTime = time;
+            invalidate(makeRect(inX, inY, radius));
         }
     }
 
@@ -213,68 +295,19 @@ public class ImpressionistView extends View {
         return new Rect(cx - (radius), cy - (radius), cx + (radius), cy + (radius));
     }
 
-
-
-
-    /**
-     * This method is useful to determine the bitmap position within the Image View. It's not needed for anything else
-     * Modified from:
-     *  - http://stackoverflow.com/a/15538856
-     *  - http://stackoverflow.com/a/26930938
-     * @param imageView
-     * @return
-     */
-    private static Rect getBitmapPositionInsideImageView(ImageView imageView){
-        Rect rect = new Rect();
-
-        if (imageView == null || imageView.getDrawable() == null) {
-            return rect;
-        }
-
-        // Get image dimensions
-        // Get image matrix values and place them in an array
-        float[] f = new float[9];
-        imageView.getImageMatrix().getValues(f);
-
-        // Extract the scale values using the constants (if aspect ratio maintained, scaleX == scaleY)
-        final float scaleX = f[Matrix.MSCALE_X];
-        final float scaleY = f[Matrix.MSCALE_Y];
-
-        // Get the drawable (could also get the bitmap behind the drawable and getWidth/getHeight)
-        final Drawable d = imageView.getDrawable();
-        final int origW = d.getIntrinsicWidth();
-        final int origH = d.getIntrinsicHeight();
-
-        // Calculate the actual dimensions
-        final int widthActual = Math.round(origW * scaleX);
-        final int heightActual = Math.round(origH * scaleY);
-
-        // Get image position
-        // We assume that the image is centered into ImageView
-        int imgViewW = imageView.getWidth();
-        int imgViewH = imageView.getHeight();
-
-        int top = (int) (imgViewH - heightActual)/2;
-        int left = (int) (imgViewW - widthActual)/2;
-
-        rect.set(left, top, left + widthActual, top + heightActual);
-
-        return rect;
-    }
-
-    public class PaintStroke {
-        Paint paint;
-        Point point;
-
-        public PaintStroke(Paint paint, Point point) {
-            this.paint = paint;
-            this.point = point;
-        }
-
-        public PaintStroke() {
-            paint = new Paint();
-            point = new Point();
-        }
-    }
+//    public class PaintStroke {
+//        Paint paint;
+//        Point point;
+//
+//        public PaintStroke(Paint paint, Point point) {
+//            this.paint = paint;
+//            this.point = point;
+//        }
+//
+//        public PaintStroke() {
+//            paint = new Paint();
+//            point = new Point();
+//        }
+//    }
 }
 
