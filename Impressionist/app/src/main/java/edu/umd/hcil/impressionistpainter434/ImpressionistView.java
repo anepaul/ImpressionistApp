@@ -23,12 +23,13 @@ public class ImpressionistView extends View {
 
     private ImageView _imageView;
     private Bitmap _originalImage;
+    private Rect _originalImageRect;
 
     private Canvas _offScreenCanvas = null;
     private Bitmap _offScreenBitmap = null;
     private Paint _paint = new Paint();
 
-    private int _alpha = 150;
+    private int _alpha = 50;
     private Point _lastPoint = new Point();
     private long _lastPointTime = -1;
     private Paint _paintBorder = new Paint();
@@ -115,7 +116,7 @@ public class ImpressionistView extends View {
         //      http://developer.android.com/reference/android/view/View.html#getDrawingCache()
         this.setDrawingCacheEnabled(true);
 
-        _paint.setColor(Color.RED);
+        _paint.setColor(Color.WHITE);
         _paint.setAlpha(_alpha);
         _paint.setAntiAlias(true);
         _paint.setStyle(Paint.Style.FILL);
@@ -142,14 +143,24 @@ public class ImpressionistView extends View {
         }
     }
 
+    public Bitmap getBitmap() {
+        return Bitmap.createBitmap(_offScreenBitmap, 0, 0, _originalImageRect.width() + 40, _originalImageRect.height() + 40);
+    }
+
     /**
      * Sets the ImageView, which hosts the image that we will paint in this view
      * @param imageView
      */
     public void setImageView(ImageView imageView){
+        clearPainting();
         _imageView = imageView;
         _originalImage = imageView.getDrawingCache();
-        if (_originalImage != null) _ready = true;
+        if (_originalImage != null) {
+            _ready = true;
+            _originalImageRect = getBitmapPositionInsideImageView(_imageView);
+            _originalImage = Bitmap.createBitmap(_originalImage, 0, 0,
+                    _originalImageRect.width(), _originalImageRect.height());
+        }
     }
 
     /**
@@ -163,10 +174,12 @@ public class ImpressionistView extends View {
     public void setMatrix(Matrix matrix) {
         if (matrix != null) {
             _dstMatrix = matrix;
+            _dstMatrix.preTranslate(-20, -20);
             _srcMatrix = new Matrix();
             if (!_dstMatrix.invert(_srcMatrix)) {
                 Log.w(TAG, "setMatrix: Matrix is not invertible");
             }
+            _originalImageRect = getBitmapPositionInsideImageView(_imageView);
             invalidate();
         }
     }
@@ -175,7 +188,10 @@ public class ImpressionistView extends View {
      * Clears the painting
      */
     public void clearPainting(){
-        _offScreenBitmap = getDrawingCache().copy(Bitmap.Config.ARGB_8888, true);
+        if (_originalImageRect != null)
+        _offScreenBitmap = Bitmap.createBitmap(_originalImageRect.width(), _originalImageRect
+        .height(), Bitmap.Config.ARGB_8888);
+        else _offScreenBitmap = getDrawingCache().copy(Bitmap.Config.ARGB_8888, true);
         _offScreenCanvas = new Canvas(_offScreenBitmap);
         invalidate();
     }
@@ -187,14 +203,14 @@ public class ImpressionistView extends View {
         if(_offScreenBitmap != null) {
 //            canvas.drawBitmap(_offScreenBitmap, 0, 0, _paint);
             if (_dstMatrix == null) {
-                canvas.drawBitmap(_offScreenBitmap, 0, 0, _paint);
+                canvas.drawBitmap(_offScreenBitmap, 0, 0, null);
             } else {
-                canvas.drawBitmap(_offScreenBitmap, _dstMatrix, _paint);
+                canvas.drawBitmap(_offScreenBitmap, _dstMatrix, null);
             }
         }
 
         // Draw the border. Helpful to see the size of the bitmap in the ImageView
-        canvas.drawRect(getBitmapPositionInsideImageView(_imageView), _paintBorder);
+        if (_originalImageRect != null)  canvas.drawRect(_originalImageRect, _paintBorder);
     }
 
     @Override
@@ -227,10 +243,9 @@ public class ImpressionistView extends View {
     }
 
     public void paintTheCanvas() {
-        for (int x = 0; x < _offScreenBitmap.getWidth(); x += 10) {
-            for (int y = 0; y < _offScreenBitmap.getHeight(); y += 10) {
-                paintCanvas(mapXY(new Point(x + (int) (Math.random() * 5), y + (int) (Math.random() * 5)), _srcMatrix),
-                        (int) (Math.random() * 10));
+        for (int x = 0; x < getWidth(); x += 10) {
+            for (int y = 0; y < getHeight(); y += 10) {
+                paintCanvas(mapXY(new Point(x + rand(10), y + rand(10)),_srcMatrix), rand(10));
             }
         }
         postInvalidate();
@@ -249,26 +264,22 @@ public class ImpressionistView extends View {
         _lastPoint = new Point((int) motionEvent.getX(), (int) motionEvent.getY());
     }
 
-    private void paintCanvas(Point point, int speed) {
-//        float [] outPoints = mapXY(point, _dstMatrix);
-//        float [] inPoints = mapXY(point, _srcMatrix);
-//        int outX = (int) outPoints[0];
-//        int outY = (int) outPoints[1];
-        int outX = point.x;
-        int outY = point.y;
-//        int inX = (int) inPoints[0];
-//        int inY = (int) inPoints[1];
-        int inX = point.x;
-        int inY = point.y;
+    private void paintCanvas(Point p, int speed) {
+        int outX = p.x;
+        int outY = p.y;
+        int inX = p.x-20;
+        int inY = p.y-20;
+        int radius = _minBrushRadius + speed;
         if (inX > 0 && inY > 0 && inX < _originalImage.getWidth() && inY < _originalImage.getHeight()) {
-            int radius = 10 + speed;
             // Extract the scale values using the constants (if aspect ratio maintained, scaleX == scaleY)
             float[] f = new float[9];
             _dstMatrix.getValues(f);
-            final float scale = f[Matrix.MSCALE_X] / 3;
+            final float scale = f[Matrix.MSCALE_X] / 2;
             radius /= scale;
-//            Log.i(TAG, "paintCanvas: radius = " + radius + ", speed = " + speed);
+            radius = Math.max(_minBrushRadius, radius);
+            Log.i(TAG, "paintCanvas: radius = " + radius + ", speed = " + speed);
             _paint.setColor(_originalImage.getPixel(inX, inY));
+            _paint.setAlpha(_alpha + (100 - (speed*2)));
             switch (_brushType) {
                 case Circle:
                     _offScreenCanvas.drawCircle(outX, outY, radius / 2, _paint);
@@ -276,9 +287,22 @@ public class ImpressionistView extends View {
                 case Square:
                     _offScreenCanvas.drawRect(makeRect(outX, outY, radius / 2), _paint);
                     break;
+                case CircleSplatter:
+                    for (int i = 0; i < 5; i++) {
+                        _offScreenCanvas.drawCircle(outX + rand(radius),
+                                outY + rand(radius), radius / rand(1,radius), _paint);
+                    }
             }
             invalidate(makeRect(inX, inY, radius));
         }
+    }
+
+    private int rand(int max) {
+        return (int) (Math.random() * max);
+    }
+
+    private int rand(int min, int max) {
+        return (int) (Math.random() * max) + 1;
     }
 
     private int getSpeed(Point p1, Point p2, long t1, long t2) {

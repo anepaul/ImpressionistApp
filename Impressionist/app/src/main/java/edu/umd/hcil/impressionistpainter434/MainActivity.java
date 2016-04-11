@@ -1,14 +1,19 @@
 package edu.umd.hcil.impressionistpainter434;
 
+import android.Manifest;
 import android.app.AlertDialog;
 import android.content.DialogInterface;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.graphics.Matrix;
 import android.net.Uri;
+import android.os.AsyncTask;
 import android.os.Bundle;
 import android.os.Environment;
 import android.provider.MediaStore;
+import android.support.v4.app.ActivityCompat;
+import android.support.v4.content.ContextCompat;
 import android.support.v7.app.AppCompatActivity;
 import android.util.Log;
 import android.view.MenuItem;
@@ -19,6 +24,7 @@ import android.widget.PopupMenu;
 import android.widget.PopupMenu.OnMenuItemClickListener;
 import android.widget.Toast;
 
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
@@ -27,6 +33,7 @@ import java.io.IOException;
 import it.sephiroth.android.library.imagezoom.ImageViewTouch;
 
 public class MainActivity extends AppCompatActivity implements OnMenuItemClickListener {
+    private static final int REQUEST_WRITE_STORAGE = 112;
     private static int RESULT_LOAD_IMAGE = 1;
     // These images are downloaded and added to the Android Gallery when the 'Download Images' button is clicked.
     // This was super useful on the emulator where there are no images by default
@@ -86,6 +93,10 @@ public class MainActivity extends AppCompatActivity implements OnMenuItemClickLi
         _impressionistView.paintTheCanvas();
     }
 
+    public void onButtonClickSave(View v) {
+        new SaveImageTask().execute(_impressionistView.getBitmap());
+    }
+
     public void onButtonClickSetBrush(View v) {
         PopupMenu popupMenu = new PopupMenu(this, v);
         popupMenu.setOnMenuItemClickListener(this);
@@ -103,17 +114,9 @@ public class MainActivity extends AppCompatActivity implements OnMenuItemClickLi
                 Toast.makeText(this, "Square Brush", Toast.LENGTH_SHORT).show();
                 _impressionistView.setBrushType(BrushType.Square);
                 return true;
-            case R.id.menuLine:
-                Toast.makeText(this, "Line Brush", Toast.LENGTH_SHORT).show();
-                _impressionistView.setBrushType(BrushType.Line);
-                return true;
             case R.id.menuCircleSplatter:
                 Toast.makeText(this, "Circle Splatter Brush", Toast.LENGTH_SHORT).show();
                 _impressionistView.setBrushType(BrushType.CircleSplatter);
-                return true;
-            case R.id.menuLineSplatter:
-                Toast.makeText(this, "Line Splatter Brush", Toast.LENGTH_SHORT).show();
-                _impressionistView.setBrushType(BrushType.LineSplatter);
                 return true;
         }
         return false;
@@ -209,10 +212,72 @@ public class MainActivity extends AppCompatActivity implements OnMenuItemClickLi
                 imageView.setImageBitmap(bitmap);
                 imageView.setDrawingCacheEnabled(true);
                 _impressionistView.setImageView(imageView);
+                _impressionistView.setMatrix(imageView.getImageMatrix());
             } catch (IOException e) {
                 e.printStackTrace();
             }
 
         }
+    }
+
+    private class SaveImageTask extends AsyncTask<Bitmap, Void, Void> {
+
+        @Override
+        protected Void doInBackground(Bitmap... data) {
+            FileOutputStream outStream = null;
+
+            try {
+                ByteArrayOutputStream stream = new ByteArrayOutputStream();
+                data[0].compress(Bitmap.CompressFormat.PNG, 95, stream);
+                byte[] byteArray = stream.toByteArray();
+
+                Log.i(TAG, "doInBackground: Saving image of size = " + byteArray.length);
+
+                boolean hasPermission = (ContextCompat.checkSelfPermission(MainActivity.this,
+                        Manifest.permission.WRITE_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED);
+                if (!hasPermission) {
+                    ActivityCompat.requestPermissions(MainActivity.this,
+                            new String[]{Manifest.permission.WRITE_EXTERNAL_STORAGE},
+                            REQUEST_WRITE_STORAGE);
+                }
+
+                if (Environment.getExternalStorageState().equals(Environment.MEDIA_MOUNTED)) {
+                    File sdCard = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES);
+
+                    String fileName = String.format("%d.png", System.currentTimeMillis());
+                    File outFile = new File(sdCard, fileName);
+                    outStream = new FileOutputStream(outFile);
+                    outStream.write(byteArray);
+                    outStream.flush();
+                    outStream.close();
+//                    if (outFile.canWrite()) {
+//
+//                    } else {
+//                        Log.w(TAG, "doInBackground: Cannot write to file");
+//                    }
+
+                    refreshGallery(outFile);
+                } else {
+                    Log.w(TAG, "doInBackground: SD card not writable");
+                }
+            } catch (FileNotFoundException e) {
+                e.printStackTrace();
+            } catch (IOException e) {
+                e.printStackTrace();
+            } finally {
+            }
+            return null;
+        }
+
+        @Override
+        protected void onPostExecute(Void aVoid) {
+            Toast.makeText(MainActivity.this, "Your masterpiece was saved", Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    private void refreshGallery(File file) {
+        Intent mediaScanIntent = new Intent( Intent.ACTION_MEDIA_SCANNER_SCAN_FILE);
+        mediaScanIntent.setData(Uri.fromFile(file));
+        sendBroadcast(mediaScanIntent);
     }
 }
